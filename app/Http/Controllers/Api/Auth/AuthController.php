@@ -28,8 +28,7 @@ class AuthController extends Controller
 
         return ApiResponse::created([
             'user' => UserResource::make($data['user']),
-            'token' => $data['token'],
-            'token_type' => $data['token_type'],
+            'token' => $data['token']
         ]);
     }
 
@@ -42,8 +41,7 @@ class AuthController extends Controller
 
         return ApiResponse::ok([
             'user' => UserResource::make($data['user']),
-            'token' => $data['token'],
-            'token_type' => $data['token_type'],
+            'token' => $data['token']
         ]);
     }
 
