@@ -26,9 +26,11 @@ RUN composer install --no-interaction --optimize-autoloader --no-scripts \
 
 COPY . /var/www/html
 
-RUN chmod -R 777 /var/www/html/storage /var/www/html/bootstrap/cache
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-RUN php artisan migrate
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
 RUN a2enmod rewrite
 
@@ -42,4 +44,5 @@ USER www-data
 
 EXPOSE 80
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["apache2-foreground"]
