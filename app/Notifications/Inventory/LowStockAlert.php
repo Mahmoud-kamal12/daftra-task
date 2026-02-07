@@ -28,7 +28,7 @@ class LowStockAlert extends Notification
             ->line('The following items are low in stock:');
 
         foreach ($this->lowStockItems as $item) {
-            $mailMessage->line("- {$item['name']} (Current Stock: {$item['current_stock']})");
+            $mailMessage->line("- {$item['item_id']} (Current Stock: {$item['available_quantity']})");
         }
 
         return $mailMessage;

@@ -12,6 +12,8 @@ use Illuminate\Validation\ValidationException;
 class TransferService
 {
     protected StockService $stockService;
+    private const BULK_THRESHOLD = 50;
+
     public function __construct(StockService $stockService) {
         $this->stockService = $stockService;
     }
@@ -19,27 +21,25 @@ class TransferService
     public function callJobToTransfer(array $data): void
     {
         /*
-         * I prefer to use a job for this transfer process because it can be time-consuming.
-         * We don't want to block the user request, also it will help us to retry the transfer process in case of failure.
-         * and we can also monitor the transfer process using the queue system.
+         * Dispatch to queue for async processing with batching support
+         * Uses low-latency processing for better throughput
         */
-        TransferJob::dispatch($data);
+        TransferJob::dispatch($data)
+            ->onQueue('transfers');
     }
 
     private function normalizeLines($lines): array
     {
-        $newNormalizedLines = [];
-
+        $normalized = [];
         foreach ($lines as $line) {
-            $newNormalizedLines[$line['item_id']] = $line['quantity'];
+            $itemId = $line['item_id'];
+            $normalized[$itemId] = $line['quantity'];
         }
-
-        ksort($newNormalizedLines);
-
-        return $newNormalizedLines;
+        ksort($normalized);
+        return $normalized;
     }
 
-    public function storeTransferBulk(int $fromWarehouse, int $toWarehouse, array $transferLines, int $createdBy, int $chunkSize = 100): StockTransfer
+    public function storeTransferBulk(int $fromWarehouse, int $toWarehouse, array $transferLines, int $createdBy, int $chunkSize = 500): StockTransfer
     {
         $transfer = StockTransfer::query()->create([
             'from_warehouse_id' => $fromWarehouse,
@@ -74,7 +74,6 @@ class TransferService
             $createdBy = $data['created_by'];
             $fromWarehouse = $data['from_warehouse_id'];
 
-            // Lock in consistent order to prevent deadlocks
             $warehousesToLock = [$fromWarehouse, $toWarehouse];
             sort($warehousesToLock);
 
@@ -91,54 +90,47 @@ class TransferService
             $transferLines = [];
 
             foreach ($neededItems as $itemId => $neededQuantity) {
-
                 $availableQuantity = $fromStockItems[$itemId] ?? null;
-                $toItemQuantity = $toStockItems[$itemId] ?? null;
+                $toItemQuantity = $toStockItems[$itemId] ?? 0;
 
                 if (is_null($availableQuantity)) {
                     throw ValidationException::withMessages([
-                        'lines' => ["Item ID {$itemId} is not available in the source warehouse ID {$fromWarehouse}."],
+                        'lines' => ["Item ID {$itemId} not available in source warehouse {$fromWarehouse}."],
                     ]);
                 }
 
                 if ($neededQuantity > $availableQuantity) {
                     throw ValidationException::withMessages([
-                        'lines' => ["Item ID {$itemId} does not have enough stock in the source warehouse. Available: {$availableQuantity}, Needed: {$neededQuantity}."],
+                        'lines' => ["Item {$itemId}: insufficient stock. Available: {$availableQuantity}, Needed: {$neededQuantity}."],
                     ]);
                 }
 
                 $now = now();
+                $newFromQuantity = $availableQuantity - $neededQuantity;
+                $newToQuantity = $toItemQuantity + $neededQuantity;
 
-                if (is_null($toItemQuantity)) {
-                    $itemsToUpdateOrCreate[] = [
-                        'warehouse_id' => $toWarehouse,
-                        'inventory_item_id' => $itemId,
-                        'quantity' => $neededQuantity,
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ];
-                } else {
-                    $itemsToUpdateOrCreate[] = [
-                        'warehouse_id' => $toWarehouse,
-                        'inventory_item_id' => $itemId,
-                        'quantity' => $toItemQuantity + $neededQuantity,
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ];
-                }
-
+                // Prepare updates for both warehouses
                 $itemsToUpdateOrCreate[] = [
-                    'warehouse_id' => $fromWarehouse,
+                    'warehouse_id' => $toWarehouse,
                     'inventory_item_id' => $itemId,
-                    'quantity' => $availableQuantity - $neededQuantity,
+                    'quantity' => $newToQuantity,
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
 
-                if ($availableQuantity - $neededQuantity < 300) {
+                $itemsToUpdateOrCreate[] = [
+                    'warehouse_id' => $fromWarehouse,
+                    'inventory_item_id' => $itemId,
+                    'quantity' => $newFromQuantity,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+
+                if ($newFromQuantity < self::BULK_THRESHOLD) {
                     $lowStockDetected[] = [
                         'item_id' => $itemId,
-                        'available_quantity' => $availableQuantity - $neededQuantity
+                        'warehouse_id' => $fromWarehouse,
+                        'available_quantity' => $newFromQuantity
                     ];
                 }
 

@@ -15,14 +15,13 @@ class StockTransferTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_successful_transfer()
+    public function test_successful_transfer(): void
     {
         $user = User::factory()->create();
         $sourceWarehouse = Warehouse::factory()->create();
         $destWarehouse = Warehouse::factory()->create();
         $item = InventoryItem::factory()->create();
 
-        // Initial Stock
         Stock::create([
             'warehouse_id' => $sourceWarehouse->id,
             'inventory_item_id' => $item->id,
@@ -52,7 +51,7 @@ class StockTransferTest extends TestCase
         ]);
     }
 
-    public function test_transfer_insufficient_stock()
+    public function test_transfer_insufficient_stock(): void
     {
         $user = User::factory()->create();
         $sourceWarehouse = Warehouse::factory()->create();
@@ -76,7 +75,7 @@ class StockTransferTest extends TestCase
         $response->assertUnprocessable(); // 422
     }
 
-    public function test_transfer_with_multiple_items()
+    public function test_transfer_with_multiple_items(): void
     {
         $user = User::factory()->create();
         $w1 = Warehouse::factory()->create();
@@ -102,7 +101,7 @@ class StockTransferTest extends TestCase
         $this->assertDatabaseHas('stocks', ['warehouse_id' => $w2->id, 'inventory_item_id' => $item1->id, 'quantity' => 10]);
     }
 
-    public function test_low_stock_event_fired()
+    public function test_low_stock_event_fired(): void
     {
         Event::fake();
 
@@ -111,24 +110,23 @@ class StockTransferTest extends TestCase
         $destWarehouse = Warehouse::factory()->create();
         $item = InventoryItem::factory()->create();
 
-        // Initial Stock: 400. Transfer 200. Remainder 200 (< 300).
         Stock::create([
             'warehouse_id' => $sourceWarehouse->id,
             'inventory_item_id' => $item->id,
-            'quantity' => 400,
+            'quantity' => 200,
         ]);
 
         $this->actingAs($user)->postJson('/api/inventory/transfers', [
             'from_warehouse_id' => $sourceWarehouse->id,
             'to_warehouse_id' => $destWarehouse->id,
             'lines' => [
-                ['item_id' => $item->id, 'quantity' => 200],
+                ['item_id' => $item->id, 'quantity' => 180],
             ],
         ]);
 
         Event::assertDispatched(LowStockDetected::class, function ($event) use ($item) {
             return $event->lowStockItems[0]['item_id'] === $item->id
-                && $event->lowStockItems[0]['available_quantity'] === 200;
+                && $event->lowStockItems[0]['available_quantity'] === 20;
         });
     }
 }

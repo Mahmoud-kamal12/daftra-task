@@ -8,6 +8,9 @@ use Illuminate\Support\Facades\DB;
 
 class StockService
 {
+    private const CACHE_TTL = 3600; // 1 hour for production data
+    private const BATCH_SIZE = 500; // Optimized for bulk operations
+
     public function pagination(array $filters)
     {
         $key = $this->generateCacheKey($filters);
@@ -16,7 +19,7 @@ class StockService
             'inventory',
             'stocks',
             "warehouse:{$filters['warehouse_id']}",
-        ])->remember($key, 60, function () use ($filters) {
+        ])->remember($key, self::CACHE_TTL, function () use ($filters) {
             return $this->fetchStockList($filters);
         });
     }
@@ -38,14 +41,15 @@ class StockService
     {
         $query = Stock::query()
             ->where('warehouse_id', $filters['warehouse_id'])
-            ->with(['warehouse', 'item']);
+            ->select(['id', 'warehouse_id', 'inventory_item_id', 'quantity', 'created_at', 'updated_at'])
+            ->with(['warehouse:id,name,code', 'item:id,name,sku']);
 
         $query = $this->buildFilters($filters, $query);
 
         return $query->paginate($filters['per_page'] ?? 15);
     }
 
-    private function buildFilters(array $filters , $query)
+    private function buildFilters(array $filters, $query)
     {
         if (!empty($filters['search']) && !empty($filters['search_by'])) {
             switch ($filters['search_by']) {
@@ -74,14 +78,9 @@ class StockService
 
         $sortableColumns = ['created_at', 'updated_at', 'quantity'];
         $sortBy = $filters['sort_by'] ?? 'created_at';
-        if (!in_array($sortBy, $sortableColumns)) {
-            $sortBy = 'created_at';
-        }
+        $sortBy = in_array($sortBy, $sortableColumns) ? $sortBy : 'created_at';
 
-        $query->orderBy(
-            $sortBy,
-            $filters['sort_dir'] ?? 'desc'
-        );
+        $query->orderBy($sortBy, $filters['sort_dir'] ?? 'desc');
 
         return $query;
     }
@@ -106,8 +105,7 @@ class StockService
             ->lockForUpdate()
             ->orderBy('inventory_item_id')
             ->pluck('quantity', 'inventory_item_id')
-            ->toArray()
-            ;
+            ->toArray();
     }
 
     public function updateOrCreateStockBatch(array $items, int $chunkSize = 100): void
@@ -116,10 +114,7 @@ class StockService
             DB::table('stocks')->upsert(
                 $chunk,
                 ['warehouse_id', 'inventory_item_id'],
-                [
-                    'quantity',
-                    'updated_at',
-                ]
+                ['quantity', 'updated_at'],
             );
         }
     }
