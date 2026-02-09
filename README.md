@@ -15,8 +15,8 @@ This API allows for:
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
-   cd <project-directory>
+   git clone https://github.com/Mahmoud-kamal12/daftra
+   cd daftra
    ```
 2. **run docker-compose**   
    ```bash
